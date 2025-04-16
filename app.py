@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import pandas_ta as ta
 from datetime import datetime, timedelta
 from pycoingecko import CoinGeckoAPI
 import time
@@ -9,6 +8,7 @@ import threading
 
 # --- Functions ---
 # Fetch live price from CoinGecko
+@st.cache_data(ttl=30) 
 def get_live_price(symbol):
     cg = CoinGeckoAPI()
     coin_id = symbol.lower()
@@ -24,9 +24,8 @@ def get_price_data(symbol, start, end):
     historical_data = yf.download(symbol, start=start, end=end, auto_adjust=True)
     return historical_data
 
-# Intraday Strategy (EMA 7 & EMA 21)
+# Intraday Strategy (EMA 3 & EMA 5)
 def intraday_strategy(data):
-    # Calculate short-term EMAs (for fast trading)
     data['EMA_3'] = data['Close'].ewm(span=3, adjust=False).mean()
     data['EMA_5'] = data['Close'].ewm(span=5, adjust=False).mean()
 
@@ -35,8 +34,8 @@ def intraday_strategy(data):
     ema_5 = float(data['EMA_5'].iloc[-1])
 
     signal = ""
-    stop_loss_pct = 0.01  # 1% loss for intraday
-    profit_pct = stop_loss_pct * 1.5  # 1.5% profit for intraday
+    stop_loss_pct = 0.01
+    profit_pct = stop_loss_pct * 1.5
 
     if ema_3 > ema_5:
         signal = "Buy"
@@ -53,17 +52,15 @@ def intraday_strategy(data):
 
     return signal, round(target_price, 2), round(stop_loss, 2)
 
-
-
-
-# Long-term Strategy (Trend Following with EMA 200)
+# Long-term Strategy (EMA 200)
 def longterm_strategy(data):
-    latest_price = float(data['Close'].iloc[-1])
-    ema_200_series = data['Close'].ewm(span=200, adjust=False).mean()
-    ema_200 = float(ema_200_series.iloc[-1])
+    data['EMA_200'] = data['Close'].ewm(span=200, adjust=False).mean()
 
-    stop_loss_pct = 0.03  # 3% loss for long-term
-    profit_pct = stop_loss_pct * 3  # 9% profit for long-term
+    latest_price = float(data['Close'].iloc[-1])
+    ema_200 = float(data['EMA_200'].iloc[-1])
+
+    stop_loss_pct = 0.03
+    profit_pct = stop_loss_pct * 3
 
     if latest_price > ema_200:
         signal = "Buy"
@@ -79,8 +76,6 @@ def longterm_strategy(data):
         stop_loss = latest_price
 
     return signal, round(target_price, 2), round(stop_loss, 2)
-
-
 
 # --- Streamlit Interface ---
 st.set_page_config(page_title="Smart Profit Predictor", layout="wide")
@@ -106,15 +101,15 @@ symbol_map = {
 
 symbol = symbol_map[asset_choice]
 
-# Choose between Intraday and Long-term
+# Choose Strategy
 strategy_type = st.sidebar.selectbox("Choose Strategy Type:", ("Intraday", "Long-term"))
 
-# Define date range
+# Date Range
 days = st.sidebar.slider("Select number of days:", 7, 90, 30)
 end_date = datetime.now()
 start_date = end_date - timedelta(days=days)
 
-# Fetch data
+# Get Data
 data = get_price_data(symbol, start=start_date, end=end_date)
 
 if data.empty:
@@ -122,47 +117,36 @@ if data.empty:
 else:
     st.line_chart(data['Close'])
 
-    # Get live price
+    # Live price
     live_price = get_live_price("bitcoin" if "BTC-USD" in symbol else "ethereum")
     if live_price:
         st.subheader(f"Live Price: ${live_price}")
 
-    # Choose Strategy Logic
+    # Strategy result
     if strategy_type == "Intraday":
         signal, target_price, stop_loss = intraday_strategy(data)
     elif strategy_type == "Long-term":
         signal, target_price, stop_loss = longterm_strategy(data)
 
-    # Display results
     st.subheader(f"📊 {strategy_type} Strategy Results")
     st.metric("Signal", signal)
     st.metric("Target Price", f"${target_price:.2f}")
     st.metric("Stop Loss", f"${stop_loss:.2f}")
 
-    # Sending email alert for actions
     if signal in ["Buy", "Sell"]:
         st.success(f"Action: {signal} | Target: {target_price} | Stop-Loss: {stop_loss}")
-        # Placeholder for email alert function (set it up with your own function)
 
-# --- Continuous Run with Threading ---
+# --- Background Task for Continuous Monitoring ---
 def run_continuous():
     while True:
-        # Fetch the data and apply strategy every minute (for intraday) or daily (for long-term)
         data = get_price_data(symbol, start=start_date, end=end_date)
         if strategy_type == "Intraday":
             signal, target_price, stop_loss = intraday_strategy(data)
         elif strategy_type == "Long-term":
             signal, target_price, stop_loss = longterm_strategy(data)
-        
-        # Placeholder for email alert
-        if signal in ["Buy", "Sell"]:
-            # Placeholder email alert
-            pass
-        
-        # Sleep for 60 seconds (for intraday) or set for longer intervals for long-term strategies
-        time.sleep(60)  # Adjust time for long-term strategies
 
-# Run continuous process in a separate thread
+        # Add alert or logging here if needed
+        time.sleep(60)
+
 thread = threading.Thread(target=run_continuous, daemon=True)
 thread.start()
-
