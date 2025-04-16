@@ -10,3 +10,4 @@ statsmodels
 numpy
 python-dotenv
 pycoingecko
+uvicorn
